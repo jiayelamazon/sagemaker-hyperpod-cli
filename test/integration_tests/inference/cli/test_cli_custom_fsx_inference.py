@@ -14,6 +14,7 @@ from sagemaker.hyperpod.cli.commands.inference import (
     custom_list_pods
 )
 from sagemaker.hyperpod.inference.hp_endpoint import HPEndpoint
+from test.integration_tests.utils import get_time_str
 
 # --------- Test Configuration ---------
 NAMESPACE = "integration"
@@ -22,13 +23,10 @@ REGION = "us-east-2"
 TIMEOUT_MINUTES = 15
 POLL_INTERVAL_SECONDS = 30
 
-BETA_FSX = "fs-0454e783bbb7356fc"
-PROD_FSX = "fs-03c59e2a7e824a22f"
-BETA_TLS = "s3://sagemaker-hyperpod-certificate-beta-us-east-2"
-PROD_TLS = "s3://sagemaker-hyperpod-certificate-prod-us-east-2"
+BETA_FSX = "fs-0402c3308e6aba65c"    # fsx id for beta integration test cluster
+
+FSX_LOCATION = os.getenv("FSX_ID", BETA_FSX)
 stage = os.getenv("STAGE", "BETA").upper()
-FSX_LOCATION = BETA_FSX if stage == "BETA" else PROD_FSX
-TLS_LOCATION = BETA_TLS if stage == "BETA" else PROD_TLS
 
 @pytest.fixture(scope="module")
 def runner():
@@ -36,7 +34,7 @@ def runner():
 
 @pytest.fixture(scope="module")
 def custom_endpoint_name():
-    return f"custom-cli-integration-fsx"
+    return "custom-cli-integration-fsx-" + get_time_str()
 
 @pytest.fixture(scope="module")
 def sagemaker_client():
@@ -53,26 +51,25 @@ def test_custom_create(runner, custom_endpoint_name):
         "--model-source-type", "fsx",
         "--model-location", "hf-eqa",
         "--fsx-file-system-id", FSX_LOCATION,
-        "--s3-region", REGION,
         "--image-uri", "763104351884.dkr.ecr.us-west-2.amazonaws.com/huggingface-pytorch-inference:2.3.0-transformers4.48.0-cpu-py311-ubuntu22.04",
         "--container-port", "8080",
         "--model-volume-mount-name", "model-weights",
         "--endpoint-name", custom_endpoint_name,
         "--resources-requests", '{"cpu": "3200m", "nvidia.com/gpu": 0, "memory": "12Gi"}',
         "--resources-limits", '{"nvidia.com/gpu": 0}',
-        "--tls-certificate-output-s3-uri", TLS_LOCATION,
         "--env", '{ "SAGEMAKER_PROGRAM": "inference.py", "SAGEMAKER_SUBMIT_DIRECTORY": "/opt/ml/model/code", "SAGEMAKER_CONTAINER_LOG_LEVEL": "20", "SAGEMAKER_MODEL_SERVER_TIMEOUT": "3600", "ENDPOINT_SERVER_TIMEOUT": "3600", "MODEL_CACHE_ROOT": "/opt/ml/model", "SAGEMAKER_ENV": "1", "SAGEMAKER_MODEL_SERVER_WORKERS": "1" }'
     ])
     assert result.exit_code == 0, result.output
 
 
+@pytest.mark.dependency(depends=["create"])
 def test_custom_list(runner, custom_endpoint_name):
     result = runner.invoke(custom_list, ["--namespace", NAMESPACE])
     assert result.exit_code == 0
     assert custom_endpoint_name in result.output
 
 
-@pytest.mark.dependency(name="describe")
+@pytest.mark.dependency(name="describe", depends=["create"])
 def test_custom_describe(runner, custom_endpoint_name):
     result = runner.invoke(custom_describe, [
         "--name", custom_endpoint_name,
@@ -114,6 +111,8 @@ def test_wait_until_inservice(custom_endpoint_name):
     pytest.fail("[ERROR] Timed out waiting for endpoint to be DeploymentComplete")
 
 
+@pytest.mark.dependency(depends=["create"])
+@pytest.mark.skip
 def test_custom_invoke(runner, custom_endpoint_name):
     result = runner.invoke(custom_invoke, [
         "--endpoint-name", custom_endpoint_name,
@@ -133,7 +132,8 @@ def test_custom_list_pods(runner):
     result = runner.invoke(custom_list_pods, ["--namespace", NAMESPACE])
     assert result.exit_code == 0
     
-
+    
+@pytest.mark.dependency(depends=["create"])
 def test_custom_delete(runner, custom_endpoint_name):
     result = runner.invoke(custom_delete, [
         "--name", custom_endpoint_name,

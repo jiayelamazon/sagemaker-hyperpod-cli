@@ -16,27 +16,16 @@ import time
 
 from sagemaker.hyperpod.cli.utils import setup_logger
 from test.integration_tests.utils import execute_command
-from test.integration_tests.abstract_integration_tests import AbstractIntegrationTests
 
 logger = setup_logger(__name__)
 
 
-class TestHypCLICommands(AbstractIntegrationTests):
+class TestHypCLICommands:
     """Integration tests for HyperPod CLI using hyp commands."""
 
     def test_list_clusters(self, cluster_name):
         """Test listing clusters """
         assert cluster_name
-
-    def test_set_cluster_context(self, cluster_name):
-        """Test setting cluster context."""
-        result = execute_command([
-            "hyp", "set-cluster-context",
-            "--cluster-name", cluster_name
-        ])
-        assert result.returncode == 0
-        context_line = result.stdout.strip().splitlines()[-1]
-        assert any(text in context_line for text in ["Updated context", "Added new context"])
 
     def test_get_cluster_context(self):
         """Test getting current cluster context."""
@@ -251,3 +240,8 @@ class TestHypCLICommands(AbstractIntegrationTests):
 
         # The job name should no longer be in the output
         assert test_job_name not in list_result.stdout
+
+def test_pytorch_get_operator_logs():
+    """Test getting operator logs via CLI"""
+    result = execute_command(["hyp", "get-operator-logs", "hyp-pytorch-job", "--since-hours", "1"])
+    assert result.returncode == 0

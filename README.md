@@ -19,24 +19,33 @@ Note: Old `hyperpod`CLI V2 has been moved to `release_v2` branch. Please refer [
   - [Getting Cluster Context](#getting-cluster-context)
   - [Listing Pods](#listing-pods)
   - [Accessing Logs](#accessing-logs)
-  - [CLI](#cli-)
-    - [Training](#training-)
-    - [Inference](#inference-)
-  - [SDK](#sdk-)
+  - [CLI](#cli)
+    - [Cluster Management](#cluster-management)
+    - [Training](#training)
+    - [Inference](#inference)
+  - [SDK](#sdk)
+    - [Cluster Management](#cluster-management-sdk)
     - [Training](#training-sdk)
     - [Inference](#inference-sdk)
+- [Examples](#examples)
   
 
 ## Overview
 
 The SageMaker HyperPod CLI is a tool that helps create training jobs and inference endpoint deployments to the Amazon SageMaker HyperPod clusters orchestrated by Amazon EKS. It provides a set of commands for managing the full lifecycle of jobs, including create, describe, list, and delete operations, as well as accessing pod and operator logs where applicable. The CLI is designed to abstract away the complexity of working directly with Kubernetes for these core actions of managing jobs on SageMaker HyperPod clusters orchestrated by Amazon EKS.
 
-## Prerequisites for Training
+## Prerequisites
+
+### Region Configuration
+
+**Important**: For commands that accept the `--region` option, if no region is explicitly provided, the command will use the default region from your AWS credentials configuration.
+
+### Prerequisites for Training
 
 - HyperPod CLI currently supports starting PyTorchJobs. To start a job, you need to install Training Operator first. 
   - You can follow [pytorch operator doc](https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-eks-operator-install.html) to install it.
 
-## Prerequisites for Inference 
+### Prerequisites for Inference 
 
 - HyperPod CLI supports creating Inference Endpoints through jumpstart and through custom Endpoint config 
   - You can follow [inference operator doc](https://github.com/aws/sagemaker-hyperpod-cli/tree/master/helm_chart/HyperPodHelmChart/charts/inference-operator) to install it.
@@ -54,26 +63,15 @@ SageMaker HyperPod CLI currently supports start training job with:
 
 1. Make sure that your local python version is 3.8, 3.9, 3.10 or 3.11.
 
-1. Install ```helm```.
+2. Install the sagemaker-hyperpod-cli package.
 
-    The SageMaker Hyperpod CLI uses Helm to start training jobs. See also the [Helm installation guide](https://helm.sh/docs/intro/install/).
-
-    ```
-    curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-    chmod 700 get_helm.sh
-    ./get_helm.sh
-    rm -f ./get_helm.sh  
-    ```
-
-1. Clone and install the sagemaker-hyperpod-cli package.
-
-    ```
+    ```bash
     pip install sagemaker-hyperpod
     ```
 
-1. Verify if the installation succeeded by running the following command.
+3. Verify if the installation succeeded by running the following command.
 
-    ```
+    ```bash
     hyp --help
     ```
 
@@ -86,10 +84,12 @@ The HyperPod CLI provides the following commands:
 - [Getting Cluster Context](#getting-cluster-context)
 - [Listing Pods](#listing-pods)
 - [Accessing Logs](#accessing-logs)
-- [CLI](#cli-)
-  - [Training](#training-)
-  - [Inference](#inference-)
-- [SDK](#sdk-)
+- [CLI](#cli)
+  - [Cluster Management](#cluster-management)
+  - [Training](#training)
+  - [Inference](#inference)
+- [SDK](#sdk)
+  - [Cluster Management](#cluster-management-sdk)
   - [Training](#training-sdk)
   - [Inference](#inference-sdk)
 
@@ -98,38 +98,49 @@ The HyperPod CLI provides the following commands:
 
 This command lists the available SageMaker HyperPod clusters and their capacity information.
 
-```
-hyp list-cluster [--region <region>]  [--namespace <namespace>] [--output <json|table>]
+```bash
+hyp list-cluster
 ```
 
-* `region` (string) - Optional. The region that the SageMaker HyperPod and EKS clusters are located. If not specified, it will be set to the region from the current AWS account credentials.
-* `namespace` (string) - Optional. The namespace that users want to check the quota with. Only the SageMaker managed namespaces are supported.
-* `output` (enum) - Optional. The output format. Available values are `table` and `json`. The default value is `json`.
+| Option | Type | Description |
+|--------|------|-------------|
+| `--region <region>` | Optional | The region that the SageMaker HyperPod and EKS clusters are located. If not specified, it will be set to the region from the current AWS account credentials. |
+| `--namespace <namespace>` | Optional | The namespace that users want to check the quota with. Only the SageMaker managed namespaces are supported. |
+| `--output <json\|table>` | Optional | The output format. Available values are `table` and `json`. The default value is `json`. |
+| `--debug` | Optional | Enable debug mode for detailed logging. |
 
 ### Connecting to a Cluster
 
 This command configures the local Kubectl environment to interact with the specified SageMaker HyperPod cluster and namespace.
 
-```
-hyp set-cluster-context --cluster-name <cluster-name> [--namespace <namespace>]
+```bash
+hyp set-cluster-context --cluster-name <cluster-name>
 ```
 
-* `cluster-name` (string) - Required. The SageMaker HyperPod cluster name to configure with.
-* `namespace` (string) - Optional. The namespace that you want to connect to. If not specified, Hyperpod cli commands will auto discover the accessible namespace.
+| Option | Type | Description |
+|--------|------|-------------|
+| `--cluster-name <cluster-name>` | Required | The SageMaker HyperPod cluster name to configure with. |
+| `--namespace <namespace>` | Optional | The namespace that you want to connect to. If not specified, Hyperpod cli commands will auto discover the accessible namespace. |
+| `--region <region>` | Optional | The AWS region where the HyperPod cluster resides. |
+| `--debug` | Optional | Enable debug mode for detailed logging. |
 
 ### Getting Cluster Context
 
 Get all the context related to the current set Cluster
 
-```
+```bash
 hyp get-cluster-context
 ```
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `--debug` | Optional | Enable debug mode for detailed logging. |
 
 ### Listing Pods
 
 This command lists all the pods associated with a specific training job.
 
-```
+```bash
 hyp list-pods hyp-pytorch-job --job-name <job-name>
 ```
 
@@ -139,27 +150,112 @@ hyp list-pods hyp-pytorch-job --job-name <job-name>
 
 This command retrieves the logs for a specific pod within a training job.
 
-```
+```bash
 hyp get-logs hyp-pytorch-job --pod-name <pod-name> --job-name <job-name>
 ```
 
-* `job-name` (string) - Required. The name of the job to get the log for.
-* `pod-name` (string) - Required. The name of the pod to get the log from.
+| Option | Type | Description |
+|--------|------|-------------|
+| `--job-name <job-name>` | Required | The name of the job to get the log for. |
+| `--pod-name <pod-name>` | Required | The name of the pod to get the log from. |
+| `--namespace <namespace>` | Optional | The namespace of the job. Defaults to 'default'. |
+| `--container <container>` | Optional | The container name to get logs from. |
 
 
-### CLI 
+## CLI
+
+### Cluster Management 
+
+**Important**: For commands that accept the `--region` option, if no region is explicitly provided, the command will use the default region from your AWS credentials configuration.
+
+**Cluster stack names must be unique within each AWS region.** If you attempt to create a cluster stack with a name that already exists in the same region, the deployment will fail.
+
+#### Initialize Cluster Configuration
+
+Initialize a new cluster configuration in the current directory:
+
+```bash
+hyp init cluster-stack
+```
+
+**Important**: The `resource_name_prefix` parameter in the generated `config.yaml` file serves as the primary identifier for all AWS resources created during deployment. Each deployment must use a unique resource name prefix to avoid conflicts. This prefix is automatically appended with a unique identifier during cluster creation to ensure resource uniqueness.
+
+#### Configure Cluster Parameters
+
+Configure cluster parameters interactively or via command line:
+
+```bash
+hyp configure --resource-name-prefix my-cluster --stage prod
+```
+
+#### Validate Configuration
+
+Validate the configuration file syntax:
+
+```bash
+hyp validate
+```
+
+#### Create Cluster Stack
+
+Create the cluster stack using the configured parameters:
+
+```bash
+hyp create
+```
+
+**Note**: The region is determined from your AWS configuration or can be specified during the init experience.
+
+#### List Cluster Stacks
+
+```bash
+hyp list cluster-stack
+```
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `--region <region>` | Optional | The AWS region to list stacks from. |
+| `--status "['CREATE_COMPLETE', 'UPDATE_COMPLETE']"` | Optional | Filter by stack status. |
+| `--debug` | Optional | Enable debug mode for detailed logging. |
+
+#### Describe Cluster Stack
+
+```bash
+hyp describe cluster-stack <stack-name>
+```
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `--region <region>` | Optional | The AWS region where the stack exists. |
+| `--debug` | Optional | Enable debug mode for detailed logging. |
+
+#### Update Existing Cluster
+
+```bash
+hyp update cluster --cluster-name my-cluster \
+    --instance-groups '[{"InstanceCount":2,"InstanceGroupName":"worker-nodes","InstanceType":"ml.m5.large"}]' \
+    --node-recovery Automatic
+```
+
+#### Reset Configuration
+
+Reset configuration to default values:
+
+```bash
+hyp reset
+```
 
 ### Training 
 
 #### Creating a Training Job 
 
-```
+```bash
 hyp create hyp-pytorch-job \
     --version 1.0 \
     --job-name test-pytorch-job \
     --image pytorch/pytorch:latest \
-    --command '["python", "train.py"]' \
-    --args '["--epochs", "10", "--batch-size", "32"]' \
+    --command '[python, train.py]' \
+    --args '[--epochs=10, --batch-size=32]' \
     --environment '{"PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:32"}' \
     --pull-policy "IfNotPresent" \
     --instance-type ml.p4d.24xlarge \
@@ -170,9 +266,15 @@ hyp create hyp-pytorch-job \
     --queue-name "training-queue" \
     --priority "high" \
     --max-retry 3 \
-    --volumes '["data-vol", "model-vol", "checkpoint-vol"]' \
-    --persistent-volume-claims '["shared-data-pvc", "model-registry-pvc"]' \
-    --output-s3-uri s3://my-bucket/model-artifacts
+    --accelerators 8 \
+    --vcpu 96.0 \
+    --memory 1152.0 \
+    --accelerators-limit 8 \
+    --vcpu-limit 96.0 \
+    --memory-limit 1152.0 \
+    --preferred-topology "topology.kubernetes.io/zone=us-west-2a" \
+    --volume name=model-data,type=hostPath,mount_path=/data,path=/data \
+    --volume name=training-output,type=pvc,mount_path=/data2,claim_name=my-pvc,read_only=false
 ```
 
 Key required parameters explained:
@@ -181,85 +283,149 @@ Key required parameters explained:
 
     --image: Docker image containing your training environment
 
-This command starts a training job named test-pytorch-job. The --output-s3-uri specifies where the trained model artifacts will be stored, for example, s3://my-bucket/model-artifacts. Note this location, as you’ll need it for deploying the custom model.
-
 ### Inference 
 
 #### Creating a JumpstartModel Endpoint
 
 Pre-trained Jumpstart models can be gotten from https://sagemaker.readthedocs.io/en/v2.82.0/doc_utils/jumpstart.html and fed into the call for creating the endpoint
 
-```
+```bash
 hyp create hyp-jumpstart-endpoint \
     --version 1.0 \
     --model-id jumpstart-model-id\
     --instance-type ml.g5.8xlarge \
-    --endpoint-name endpoint-jumpstart \
-    --tls-output-s3-uri s3://sample-bucket
+    --endpoint-name endpoint-jumpstart
 ```
 
 
 #### Invoke a JumpstartModel Endpoint
 
-```
-hyp invoke hyp-jumpstart-endpoint \
+```bash
+hyp invoke hyp-custom-endpoint \
     --endpoint-name endpoint-jumpstart \
     --body '{"inputs":"What is the capital of USA?"}'
 ```
 
+**Note**: Both JumpStart and custom endpoints use the same invoke command.
+
 #### Managing an Endpoint 
 
-```
+```bash
 hyp list hyp-jumpstart-endpoint
-hyp get hyp-jumpstart-endpoint --name endpoint-jumpstart
+hyp describe hyp-jumpstart-endpoint --name endpoint-jumpstart
 ```
 
 #### Creating a Custom Inference Endpoint 
 
-```
+```bash
 hyp create hyp-custom-endpoint \
     --version 1.0 \
     --endpoint-name my-custom-endpoint \
     --model-name my-pytorch-model \
     --model-source-type s3 \
-    --model-location my-pytorch-training/model.tar.gz \
+    --model-location my-pytorch-training \
+    --model-volume-mount-name test-volume \
     --s3-bucket-name your-bucket \
     --s3-region us-east-1 \
     --instance-type ml.g5.8xlarge \
     --image-uri 763104351884.dkr.ecr.us-east-1.amazonaws.com/pytorch-inference:latest \
     --container-port 8080
-
 ```
 
 #### Invoke a Custom Inference Endpoint 
 
-```
+```bash
 hyp invoke hyp-custom-endpoint \
     --endpoint-name endpoint-custom-pytorch \
     --body '{"inputs":"What is the capital of USA?"}'
-    
 ```
 
 #### Deleting an Endpoint
 
-```
+```bash
 hyp delete hyp-jumpstart-endpoint --name endpoint-jumpstart
 ```
 
 
 ## SDK 
 
-Along with the CLI, we also have SDKs available that can perform the training and inference functionalities that the CLI performs
+Along with the CLI, we also have SDKs available that can perform the cluster management, training and inference functionalities that the CLI performs
+
+### Cluster Management SDK
+
+#### Creating a Cluster Stack
+
+```python
+from sagemaker.hyperpod.cluster_management.hp_cluster_stack import HpClusterStack
+
+# Initialize cluster stack configuration
+cluster_stack = HpClusterStack(
+    stage="prod",
+    resource_name_prefix="my-hyperpod",
+    hyperpod_cluster_name="my-hyperpod-cluster",
+    eks_cluster_name="my-hyperpod-eks",
+    
+    # Infrastructure components
+    create_vpc_stack=True,
+    create_eks_cluster_stack=True,
+    create_hyperpod_cluster_stack=True,
+    
+    # Network configuration
+    vpc_cidr="10.192.0.0/16",
+    availability_zone_ids=["use2-az1", "use2-az2"],
+    
+    # Instance group configuration
+    instance_group_settings=[
+        {
+            "InstanceCount": 1,
+            "InstanceGroupName": "controller-group",
+            "InstanceType": "ml.t3.medium",
+            "TargetAvailabilityZoneId": "use2-az2"
+        }
+    ]
+)
+
+# Create the cluster stack
+response = cluster_stack.create(region="us-east-2")
+```
+
+#### Listing Cluster Stacks
+
+```python
+# List all cluster stacks
+stacks = HpClusterStack.list(region="us-east-2")
+print(f"Found {len(stacks['StackSummaries'])} stacks")
+```
+
+#### Describing a Cluster Stack
+
+```python
+# Describe a specific cluster stack
+stack_info = HpClusterStack.describe("my-stack-name", region="us-east-2")
+print(f"Stack status: {stack_info['Stacks'][0]['StackStatus']}")
+```
+
+#### Monitoring Cluster Status
+
+```python
+from sagemaker.hyperpod.cluster_management.hp_cluster_stack import HpClusterStack
+
+stack = HpClusterStack()
+response = stack.create(region="us-west-2")
+status = stack.get_status(region="us-west-2")
+print(status)
+```
 
 ### Training SDK
 
 #### Creating a Training Job 
 
-```
-
-from sagemaker.hyperpod import HyperPodPytorchJob
-from sagemaker.hyperpod.job 
-import ReplicaSpec, Template, Spec, Container, Resources, RunPolicy, Metadata
+```python
+from sagemaker.hyperpod.training.hyperpod_pytorch_job import HyperPodPytorchJob
+from sagemaker.hyperpod.training.config.hyperpod_pytorch_job_unified_config import (
+    ReplicaSpec, Template, Spec, Containers, Resources, RunPolicy
+)
+from sagemaker.hyperpod.common.config.metadata import Metadata
 
 # Define job specifications
 nproc_per_node = "1"  # Number of processes per node
@@ -274,7 +440,7 @@ replica_specs =
             (
                 containers =
                 [
-                    Container
+                    Containers
                     (
                         # Container name
                         name="container-name",  
@@ -315,8 +481,6 @@ pytorch_job = HyperPodPytorchJob
     replica_specs = replica_specs,     
     # Run policy
     run_policy = run_policy,           
-    # S3 location for artifacts
-    output_s3_uri="s3://my-bucket/model-artifacts"  
 )
 # Launch the job
 pytorch_job.create()  
@@ -336,24 +500,18 @@ Pre-trained Jumpstart models can be gotten from https://sagemaker.readthedocs.io
 from sagemaker.hyperpod.inference.config.hp_jumpstart_endpoint_config import Model, Server, SageMakerEndpoint, TlsConfig
 from sagemaker.hyperpod.inference.hp_jumpstart_endpoint import HPJumpStartEndpoint
 
-model = Model(
-    model_id="deepseek-llm-r1-distill-qwen-1-5b",
-    model_version="2.0.4"
+model=Model(
+    model_id='deepseek-llm-r1-distill-qwen-1-5b'
 )
-
-server = Server(
-    instance_type="ml.g5.8xlarge"
+server=Server(
+    instance_type='ml.g5.8xlarge',
 )
+endpoint_name=SageMakerEndpoint(name='<my-endpoint-name>')
 
-endpoint_name = SageMakerEndpoint(name="endpoint-jumpstart")
-
-tls_config = TlsConfig(tls_certificate_output_s3_uri="s3://sample-bucket")
-
-js_endpoint = HPJumpStartEndpoint(
+js_endpoint=HPJumpStartEndpoint(
     model=model,
     server=server,
-    sage_maker_endpoint=endpoint_name,
-    tls_config=tls_config
+    sage_maker_endpoint=endpoint_name
 )
 
 js_endpoint.create()
@@ -369,51 +527,51 @@ print(response)
 ```
 
 
-#### Creating a Custom Inference Endpoint 
+#### Creating a Custom Inference Endpoint (with S3)
 
 ```
-from sagemaker.hyperpod.inference.config.hp_custom_endpoint_config import Model, Server, SageMakerEndpoint, TlsConfig, EnvironmentVariables
-from sagemaker.hyperpod.inference.hp_custom_endpoint import HPCustomEndpoint
+from sagemaker.hyperpod.inference.config.hp_endpoint_config import CloudWatchTrigger, Dimensions, AutoScalingSpec, Metrics, S3Storage, ModelSourceConfig, TlsConfig, EnvironmentVariables, ModelInvocationPort, ModelVolumeMount, Resources, Worker
+from sagemaker.hyperpod.inference.hp_endpoint import HPEndpoint
 
-model = Model(
-    model_source_type="s3",
-    model_location="test-pytorch-job/model.tar.gz",
-    s3_bucket_name="my-bucket",
-    s3_region="us-east-2",
-    prefetch_enabled=True
+model_source_config = ModelSourceConfig(
+    model_source_type='s3',
+    model_location="<my-model-folder-in-s3>",
+    s3_storage=S3Storage(
+        bucket_name='<my-model-artifacts-bucket>',
+        region='us-east-2',
+    ),
 )
 
-server = Server(
-    instance_type="ml.g5.8xlarge",
-    image_uri="763104351884.dkr.ecr.us-east-2.amazonaws.com/huggingface-pytorch-tgi-inference:2.4.0-tgi2.3.1-gpu-py311-cu124-ubuntu22.04-v2.0",
-    container_port=8080,
-    model_volume_mount_name="model-weights"
+environment_variables = [
+    EnvironmentVariables(name="HF_MODEL_ID", value="/opt/ml/model"),
+    EnvironmentVariables(name="SAGEMAKER_PROGRAM", value="inference.py"),
+    EnvironmentVariables(name="SAGEMAKER_SUBMIT_DIRECTORY", value="/opt/ml/model/code"),
+    EnvironmentVariables(name="MODEL_CACHE_ROOT", value="/opt/ml/model"),
+    EnvironmentVariables(name="SAGEMAKER_ENV", value="1"),
+]
+
+worker = Worker(
+    image='763104351884.dkr.ecr.us-east-2.amazonaws.com/huggingface-pytorch-tgi-inference:2.4.0-tgi2.3.1-gpu-py311-cu124-ubuntu22.04-v2.0',
+    model_volume_mount=ModelVolumeMount(
+        name='model-weights',
+    ),
+    model_invocation_port=ModelInvocationPort(container_port=8080),
+    resources=Resources(
+            requests={"cpu": "30000m", "nvidia.com/gpu": 1, "memory": "100Gi"},
+            limits={"nvidia.com/gpu": 1}
+    ),
+    environment_variables=environment_variables,
 )
 
-resources = {
-    "requests": {"cpu": "30000m", "nvidia.com/gpu": 1, "memory": "100Gi"},
-    "limits": {"nvidia.com/gpu": 1}
-}
+tls_config=TlsConfig(tls_certificate_output_s3_uri='s3://<my-tls-bucket-name>')
 
-env = EnvironmentVariables(
-    HF_MODEL_ID="/opt/ml/model",
-    SAGEMAKER_PROGRAM="inference.py",
-    SAGEMAKER_SUBMIT_DIRECTORY="/opt/ml/model/code",
-    MODEL_CACHE_ROOT="/opt/ml/model",
-    SAGEMAKER_ENV="1"
-)
-
-endpoint_name = SageMakerEndpoint(name="endpoint-custom-pytorch")
-
-tls_config = TlsConfig(tls_certificate_output_s3_uri="s3://sample-bucket")
-
-custom_endpoint = HPCustomEndpoint(
-    model=model,
-    server=server,
-    resources=resources,
-    environment=env,
-    sage_maker_endpoint=endpoint_name,
+custom_endpoint = HPEndpoint(
+    endpoint_name='<my-endpoint-name>',
+    instance_type='ml.g5.8xlarge',
+    model_name='deepseek15b-test-model-name',  
     tls_config=tls_config,
+    model_source_config=model_source_config,
+    worker=worker,
 )
 
 custom_endpoint.create()
@@ -430,28 +588,24 @@ print(response)
 #### Managing an Endpoint 
 
 ```
-endpoint_iterator = HPJumpStartEndpoint.list()
-for endpoint in endpoint_iterator:
-    print(endpoint.name, endpoint.status)
+endpoint_list = HPEndpoint.list()
+print(endpoint_list[0])
 
-logs = js_endpoint.get_logs()
-print(logs)
+print(custom_endpoint.get_operator_logs(since_hours=0.5))
 
 ```
 
 #### Deleting an Endpoint 
 
 ```
-js_endpoint.delete()
+custom_endpoint.delete()
 
 ```
 
 #### Observability - Getting Monitoring Information
-```
-from sagemaker.hyperpod.utils import get_monitoring_config,
+```python
+from sagemaker.hyperpod.observability.utils import get_monitoring_config
 monitor_config = get_monitoring_config()
-monitor_config.grafanaURL
-monitor_config.prometheusURL
 ```
 
 ## Disclaimer 

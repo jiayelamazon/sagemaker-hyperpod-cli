@@ -1,5 +1,4 @@
 import time
-import uuid
 import pytest
 import boto3
 import os
@@ -14,6 +13,7 @@ from sagemaker.hyperpod.cli.commands.inference import (
     custom_list_pods
 )
 from sagemaker.hyperpod.inference.hp_endpoint import HPEndpoint
+from test.integration_tests.utils import get_time_str
 
 # --------- Test Configuration ---------
 NAMESPACE = "integration"
@@ -24,11 +24,8 @@ POLL_INTERVAL_SECONDS = 30
 
 BETA_BUCKET = "sagemaker-hyperpod-beta-integ-test-model-bucket-n"
 PROD_BUCKET = "sagemaker-hyperpod-prod-integ-test-model-bucket"
-BETA_TLS = "s3://sagemaker-hyperpod-certificate-beta-us-east-2"
-PROD_TLS = "s3://sagemaker-hyperpod-certificate-prod-us-east-2"
 stage = os.getenv("STAGE", "BETA").upper()
 BUCKET_LOCATION = BETA_BUCKET if stage == "BETA" else PROD_BUCKET
-TLS_LOCATION = BETA_TLS if stage == "BETA" else PROD_TLS
 
 @pytest.fixture(scope="module")
 def runner():
@@ -36,7 +33,7 @@ def runner():
 
 @pytest.fixture(scope="module")
 def custom_endpoint_name():
-    return f"custom-cli-integration-s3"
+    return "custom-cli-integration-s3-" + get_time_str()
 
 @pytest.fixture(scope="module")
 def sagemaker_client():
@@ -60,19 +57,19 @@ def test_custom_create(runner, custom_endpoint_name):
         "--endpoint-name", custom_endpoint_name,
         "--resources-requests", '{"cpu": "3200m", "nvidia.com/gpu": 0, "memory": "12Gi"}',
         "--resources-limits", '{"nvidia.com/gpu": 0}',
-        "--tls-certificate-output-s3-uri", TLS_LOCATION,
         "--env", '{ "SAGEMAKER_PROGRAM": "inference.py", "SAGEMAKER_SUBMIT_DIRECTORY": "/opt/ml/model/code", "SAGEMAKER_CONTAINER_LOG_LEVEL": "20", "SAGEMAKER_MODEL_SERVER_TIMEOUT": "3600", "ENDPOINT_SERVER_TIMEOUT": "3600", "MODEL_CACHE_ROOT": "/opt/ml/model", "SAGEMAKER_ENV": "1", "SAGEMAKER_MODEL_SERVER_WORKERS": "1" }'
     ])
     assert result.exit_code == 0, result.output
 
 
+@pytest.mark.dependency(depends=["create"])
 def test_custom_list(runner, custom_endpoint_name):
     result = runner.invoke(custom_list, ["--namespace", NAMESPACE])
     assert result.exit_code == 0
     assert custom_endpoint_name in result.output
 
 
-@pytest.mark.dependency(name="describe")
+@pytest.mark.dependency(name="describe", depends=["create"])
 def test_custom_describe(runner, custom_endpoint_name):
     result = runner.invoke(custom_describe, [
         "--name", custom_endpoint_name,
@@ -114,6 +111,7 @@ def test_wait_until_inservice(custom_endpoint_name):
     pytest.fail("[ERROR] Timed out waiting for endpoint to be DeploymentComplete")
 
 
+@pytest.mark.dependency(depends=["create"])
 def test_custom_invoke(runner, custom_endpoint_name):
     result = runner.invoke(custom_invoke, [
         "--endpoint-name", custom_endpoint_name,
@@ -134,6 +132,7 @@ def test_custom_list_pods(runner):
     assert result.exit_code == 0
     
 
+@pytest.mark.dependency(depends=["create"])
 def test_custom_delete(runner, custom_endpoint_name):
     result = runner.invoke(custom_delete, [
         "--name", custom_endpoint_name,

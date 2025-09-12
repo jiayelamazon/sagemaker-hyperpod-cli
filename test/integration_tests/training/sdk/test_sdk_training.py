@@ -19,12 +19,11 @@ from sagemaker.hyperpod.training import (
 )
 from sagemaker.hyperpod.common.config import Metadata
 from sagemaker.hyperpod.cli.utils import setup_logger
-from test.integration_tests.abstract_integration_tests import AbstractIntegrationTests
 
 logger = setup_logger(__name__)
 
 
-class TestHyperPodTrainingSDK(AbstractIntegrationTests):
+class TestHyperPodTrainingSDK:
     """Integration tests for HyperPod Training SDK."""
 
     def test_create_job(self, pytorch_job):
@@ -71,10 +70,9 @@ class TestHyperPodTrainingSDK(AbstractIntegrationTests):
         job_names = [job.metadata.name for job in jobs]
         assert pytorch_job.metadata.name in job_names
 
-    #
     def test_refresh_job(self, pytorch_job):
         pytorch_job.refresh()
-        time.sleep(15)
+        time.sleep(30)
         assert pytorch_job.status is not None, "Job status should not be None"
         logger.info(f"Refreshed job status:\n{yaml.dump(pytorch_job.status)}")
 
@@ -114,3 +112,8 @@ class TestHyperPodTrainingSDK(AbstractIntegrationTests):
         jobs = HyperPodPytorchJob.list()
         job_names = [job.metadata.name for job in jobs]
         assert pytorch_job.metadata.name not in job_names
+
+def test_get_operator_logs():
+    """Test getting operator logs"""
+    logs = HyperPodPytorchJob.get_operator_logs(since_hours=1)
+    assert logs

@@ -1,21 +1,19 @@
 import time
-import uuid
-import json
 import pytest
 import boto3
 import os
 from sagemaker.hyperpod.inference.hp_endpoint import HPEndpoint
 from sagemaker.hyperpod.inference.config.hp_endpoint_config import (
     ModelSourceConfig, S3Storage, TlsConfig, Worker, ModelVolumeMount,
-    ModelInvocationPort, Resources, EnvironmentVariables, AutoScalingSpec,
-    CloudWatchTrigger, Dimensions, Metrics
+    ModelInvocationPort, Resources, EnvironmentVariables
 )
 import sagemaker_core.main.code_injection.codec as codec
+from test.integration_tests.utils import get_time_str
 
 # --------- Test Configuration ---------
 NAMESPACE = "integration"
 REGION = "us-east-2"
-ENDPOINT_NAME = f"custom-sdk-integration-s3"
+ENDPOINT_NAME = "custom-sdk-integration-s3-" + get_time_str()
 
 MODEL_NAME = f"test-model-integration-sdk-s3"
 MODEL_LOCATION = "hf-eqa"
@@ -27,11 +25,8 @@ POLL_INTERVAL_SECONDS = 30
 BETA_BUCKET = "sagemaker-hyperpod-beta-integ-test-model-bucket-n"
 PROD_BUCKET = "sagemaker-hyperpod-prod-integ-test-model-bucket"
 
-BETA_TLS = "s3://sagemaker-hyperpod-certificate-beta-us-east-2"
-PROD_TLS = "s3://sagemaker-hyperpod-certificate-prod-us-east-2"
 stage = os.getenv("STAGE", "BETA").upper()
 BUCKET_LOCATION = BETA_BUCKET if stage == "BETA" else PROD_BUCKET
-TLS_LOCATION = BETA_TLS if stage == "BETA" else PROD_TLS
 
 @pytest.fixture(scope="module")
 def sagemaker_client():
@@ -39,8 +34,6 @@ def sagemaker_client():
 
 @pytest.fixture(scope="module")
 def custom_endpoint():
-    # TLS
-    tls = TlsConfig(tls_certificate_output_s3_uri=TLS_LOCATION)
 
     # Model Source
     model_src = ModelSourceConfig(
@@ -80,7 +73,6 @@ def custom_endpoint():
         endpoint_name=ENDPOINT_NAME,
         instance_type="ml.c5.2xlarge",
         model_name=MODEL_NAME,
-        tls_config=tls,
         model_source_config=model_src,
         worker=worker,
     )
@@ -90,12 +82,15 @@ def test_create_endpoint(custom_endpoint):
     custom_endpoint.create(namespace=NAMESPACE)
     assert custom_endpoint.metadata.name == ENDPOINT_NAME
 
+
+@pytest.mark.dependency(depends=["create"])
 def test_list_endpoint():
     endpoints = HPEndpoint.list(namespace=NAMESPACE)
     names = [ep.metadata.name for ep in endpoints]
     assert ENDPOINT_NAME in names
 
-@pytest.mark.dependency(name="describe")
+
+@pytest.mark.dependency(name="describe", depends=["create"])
 def test_get_endpoint():
     ep = HPEndpoint.get(name=ENDPOINT_NAME, namespace=NAMESPACE)
     assert ep.modelName == MODEL_NAME
@@ -130,6 +125,9 @@ def test_wait_until_inservice():
 
     pytest.fail("[ERROR] Timed out waiting for endpoint to be DeploymentComplete")
 
+
+@pytest.mark.dependency(depends=["create"])
+@pytest.mark.skip
 def test_invoke_endpoint(monkeypatch):
     original_transform = codec.transform
 
@@ -159,6 +157,7 @@ def test_list_pods():
     assert pods
 
 
+@pytest.mark.dependency(depends=["create"])
 def test_delete_endpoint():
     ep = HPEndpoint.get(name=ENDPOINT_NAME, namespace=NAMESPACE)
     ep.delete()

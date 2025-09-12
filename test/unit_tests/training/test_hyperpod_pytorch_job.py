@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, Mock
 from kubernetes.client.exceptions import ApiException
 
 from sagemaker.hyperpod.training import (
@@ -47,6 +47,28 @@ class TestHyperPodPytorchJob(unittest.TestCase):
             replica_specs=replica_specs,
             run_policy=run_policy,
         )
+        
+    @patch("kubernetes.config.load_kube_config")
+    def test_verify_kube_config(self, mock_load_config):
+        """Test verify_kube_config method"""        
+        HyperPodPytorchJob.is_kubeconfig_loaded = False
+        
+        # Mock the verify_kubernetes_version_compatibility function directly in the module
+        with patch("sagemaker.hyperpod.training.hyperpod_pytorch_job.verify_kubernetes_version_compatibility") as mock_verify:
+            HyperPodPytorchJob.verify_kube_config()
+            
+            mock_load_config.assert_called_once()
+            mock_verify.assert_called_once()
+            self.assertTrue(HyperPodPytorchJob.is_kubeconfig_loaded)
+            
+            mock_load_config.reset_mock()
+            mock_verify.reset_mock()
+            
+            # Second call should do nothing since config is already loaded
+            HyperPodPytorchJob.verify_kube_config()
+            
+            mock_load_config.assert_not_called()
+            mock_verify.assert_not_called()
 
     @patch.object(HyperPodPytorchJob, "verify_kube_config")
     @patch("sagemaker.hyperpod.training.hyperpod_pytorch_job.client.CustomObjectsApi")
@@ -239,7 +261,7 @@ class TestHyperPodPytorchJob(unittest.TestCase):
             container="test-container",
         )
         self.assertEqual(result, "test logs")
-
+        
     @patch.object(HyperPodPytorchJob, "verify_kube_config")
     @patch("sagemaker.hyperpod.training.hyperpod_pytorch_job.config.load_kube_config")
     @patch("sagemaker.hyperpod.training.hyperpod_pytorch_job.client.CoreV1Api")
@@ -260,6 +282,31 @@ class TestHyperPodPytorchJob(unittest.TestCase):
             container="specific-container",
         )
         self.assertEqual(result, "test logs")
+
+    @patch("kubernetes.client.CoreV1Api")
+    @patch.object(HyperPodPytorchJob, "verify_kube_config")
+    def test_get_operator_logs(self, mock_verify_config, mock_core_api):
+        # Mock only the training operator pod (since we're using label selector)
+        mock_operator_pod = MagicMock()
+        mock_operator_pod.metadata.name = "training-operator-pod-abc123"
+        
+        mock_core_api.return_value.list_namespaced_pod.return_value.items = [mock_operator_pod]
+        mock_core_api.return_value.read_namespaced_pod_log.return_value = "training operator logs"
+
+        result = HyperPodPytorchJob.get_operator_logs(2.5)
+
+        self.assertEqual(result, "training operator logs")
+        # Verify label selector is used
+        mock_core_api.return_value.list_namespaced_pod.assert_called_once_with(
+            namespace="aws-hyperpod",
+            label_selector="hp-training-control-plane"
+        )
+        mock_core_api.return_value.read_namespaced_pod_log.assert_called_once_with(
+            name="training-operator-pod-abc123",
+            namespace="aws-hyperpod",
+            timestamps=True,
+            since_seconds=9000,
+        )
 
 
 class TestLoadHpJob(unittest.TestCase):

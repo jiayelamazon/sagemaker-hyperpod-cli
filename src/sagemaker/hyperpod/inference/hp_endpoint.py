@@ -19,6 +19,7 @@ from sagemaker.hyperpod.inference.hp_endpoint_base import HPEndpointBase
 from typing import Dict, List, Optional
 from sagemaker_core.main.resources import Endpoint
 from pydantic import Field, ValidationError
+from kubernetes import client
 
 
 class HPEndpoint(_HPEndpoint, HPEndpointBase):
@@ -38,7 +39,7 @@ class HPEndpoint(_HPEndpoint, HPEndpointBase):
         spec = _HPEndpoint(**self.model_dump(by_alias=True, exclude_none=True))
 
         if not spec.endpointName and not name:
-            raise Exception('Input "name" is required if endpoint name is not provided')
+            raise Exception('Either metadata name or endpoint name must be provided')
 
         if not namespace:
             namespace = get_default_namespace()
@@ -53,6 +54,7 @@ class HPEndpoint(_HPEndpoint, HPEndpointBase):
             kind=INFERENCE_ENDPOINT_CONFIG_KIND,
             namespace=namespace,
             spec=spec,
+            debug=debug,
         )
 
         self.metadata = Metadata(
@@ -70,9 +72,10 @@ class HPEndpoint(_HPEndpoint, HPEndpointBase):
         input: Dict,
         name: str = None,
         namespace: str = None,
+        debug=False
     ) -> None:
         logger = self.get_logger()
-        logger = setup_logging(logger)
+        logger = setup_logging(logger, debug)
 
         spec = _HPEndpoint.model_validate(input, by_name=True)
 
@@ -92,6 +95,7 @@ class HPEndpoint(_HPEndpoint, HPEndpointBase):
             kind=INFERENCE_ENDPOINT_CONFIG_KIND,
             namespace=namespace,
             spec=spec,
+            debug=debug,
         )
 
         self.metadata = Metadata(
@@ -211,3 +215,36 @@ class HPEndpoint(_HPEndpoint, HPEndpointBase):
             raise Exception(
                 f"Current HyperPod cluster does not have instance type {instance_type}. Supported instance types are {cluster_instance_types}"
             )
+
+    @classmethod
+    @_hyperpod_telemetry_emitter(Feature.HYPERPOD, "list_pods_endpoint")
+    def list_pods(cls, namespace=None, endpoint_name=None):
+        cls.verify_kube_config()
+
+        if not namespace:
+            namespace = get_default_namespace()
+
+        v1 = client.CoreV1Api()
+        list_pods_response = v1.list_namespaced_pod(namespace=namespace)
+
+        endpoints = set()
+        if endpoint_name:
+            endpoints.add(endpoint_name)
+        else:
+            list_response = cls.call_list_api(
+                kind=INFERENCE_ENDPOINT_CONFIG_KIND,
+                namespace=namespace,
+            )
+            if list_response and list_response["items"]:
+                for item in list_response["items"]:
+                    endpoints.add(item["metadata"]["name"])
+
+        pods = []
+        for item in list_pods_response.items:
+            app_name = item.metadata.labels.get("app", None)
+            if app_name in endpoints:
+                # list_namespaced_pod will return all pods in the namespace, so we need to filter
+                # out the pods that are created by custom endpoint
+                pods.append(item.metadata.name)
+
+        return pods

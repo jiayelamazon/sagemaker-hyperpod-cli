@@ -33,6 +33,7 @@ More information about orchestration features for cluster admins [here](https://
 | [Kubeflow Training Operator](https://www.kubeflow.org/docs/components/trainer/legacy-v1/overview/)            | Installs operators for managing various machine learning training jobs, such as TensorFlow, PyTorch, and MXNet, providing native Kubernetes support for distributed training workloads. |              | Yes               |
 | HyperPod patching            | Deploys the RBAC and controller resources needed for orchestrating rolling updates and patching workflows in SageMaker HyperPod clusters. Includes pod eviction and node monitoring.    | HyperPod Resiliency             | Yes               |
 | hyperpod-inference-operator  | Installs the HyperPod Inference Operator and its dependencies to the cluster, allowing cluster deployment and inferencing of JumpStart, s3-hosted, and FSx-hosted models                | No                | 
+| [cert-manager](https://github.com/cert-manager/cert-manager)                | Automatically provisions and manages TLS certificates in Kubernetes clusters. Provides certificate lifecycle management including issuance, renewal, and revocation for secure communications. | [Hyperpod training operator](https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-eks-operator.html)           | No                |
 
 > **_Note_** The `mpijob` scheme is disabled in the Training Operator helm chart to avoid conflicting with the MPI Operator. 
 
@@ -47,6 +48,20 @@ If you would like to enable a helm chart that is disabled by default, such as th
 storage:
   enabled: true
 ```
+
+To enable cert-manager for TLS certificate management, pass in `--set cert-manager.enabled=true` when installing or upgrading the main chart or set the following in the values.yaml file:
+```
+cert-manager:
+  enabled: true
+  namespace: cert-manager
+  global:
+    leaderElection:
+      namespace: cert-manager
+  crds:
+    enabled: true  
+```
+namespace specifies which name space cert-manager should be installed
+
 
 ---
 
@@ -169,21 +184,69 @@ helm upgrade dependencies helm_chart/HyperPodHelmChart --namespace kube-system
 
 ## 6. Notes
 - Training job auto resume is expected to work with Kubeflow training operator release v1.7.0, v1.8.0, v1.8.1 https://github.com/kubeflow/training-operator/releases
-- If you intend to use the Health Monitoring Agent container image from another region, please see below list to find relevant region's URI.
+- The Health Monitoring Agent now automatically selects the correct container image URI based on your AWS region. The Helm chart intelligently detects the region from your Kubernetes cluster context.
+
+- **Intelligent Region Detection**: The chart automatically detects your AWS region using multiple methods:
+  1. **Explicit region setting** (highest priority): `--set health-monitoring-agent.region=us-east-1`
+  2. **Global region setting**: `--set global.region=us-east-1`
+  3. **Kubernetes cluster context detection**: Automatically extracts region from:
+     - EKS API server URL patterns
+     - Node topology labels (`topology.kubernetes.io/region`)
+     - AWS provider IDs in node specifications
+     - Legacy region labels (`failure-domain.beta.kubernetes.io/region`)
+  4. **Default fallback region**: us-east-1
+
+- **Manual Region Override**: If needed, you can still specify a region manually:
+  ```bash
+  helm install dependencies helm_chart/HyperPodHelmChart --namespace kube-system --set health-monitoring-agent.region=us-west-2
   ```
-  IAD 767398015722.dkr.ecr.us-east-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
-  PDX 905418368575.dkr.ecr.us-west-2.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
-  CMH 851725546812.dkr.ecr.us-east-2.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
-  SFO 011528288828.dkr.ecr.us-west-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
-  FRA 211125453373.dkr.ecr.eu-central-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
-  ARN 654654141839.dkr.ecr.eu-north-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
-  DUB 533267293120.dkr.ecr.eu-west-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
-  LHR 011528288831.dkr.ecr.eu-west-2.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
-  NRT 533267052152.dkr.ecr.ap-northeast-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
-  BOM 011528288864.dkr.ecr.ap-south-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
-  SIN 905418428165.dkr.ecr.ap-southeast-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
-  SYD 851725636348.dkr.ecr.ap-southeast-2.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
-  GRU 025066253954.dkr.ecr.sa-east-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.643.0_1.0.192.0
+
+- **Debug Mode**: Enabled by default, to troubleshoot region detection and image selection:
+  ```bash
+  # Disable debug mode during installation
+  helm install dependencies helm_chart/HyperPodHelmChart --namespace kube-system --set health-monitoring-agent.debug=false
+  
+  # Or upgrade existing installation with debug disabled
+  helm upgrade dependencies helm_chart/HyperPodHelmChart --namespace kube-system --set health-monitoring-agent.debug=false
+  ```
+
+- **Viewing Debug Information**: When debug mode is enabled, detailed information is stored in a ConfigMap:
+  ```bash
+  # View debug information (clean output)
+  kubectl get configmap health-monitoring-agent-debug -n aws-hyperpod -o jsonpath='{.data.debug-info\.txt}'
+  
+  # View full ConfigMap details
+  kubectl get configmap health-monitoring-agent-debug -n aws-hyperpod -o yaml
+  ```
+
+- **Debug Information Includes**:
+  - Image tag selection process (component-specific settings)
+  - Region detection methods attempted (EKS API server URL, node labels)
+  - Number of nodes found and labels checked
+  - Final region determination and account ID mapping
+  - Generated image URI
+  - Timestamp of debug information generation
+
+- **Custom Image Override**: For advanced use cases, you can still override the image URI completely:
+  ```bash
+  helm install dependencies helm_chart/HyperPodHelmChart --namespace kube-system --set health-monitoring-agent.hmaimage=""
+  ```
+
+- **Supported Regions and their ECR URIs**:
+  ```
+  us-east-1 (US East (N. Virginia)):      767398015722.dkr.ecr.us-east-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
+  us-west-2 (US West (Oregon)):           905418368575.dkr.ecr.us-west-2.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
+  us-east-2 (US East (Ohio)):             851725546812.dkr.ecr.us-east-2.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
+  us-west-1 (US West (N. California)):    011528288828.dkr.ecr.us-west-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
+  eu-central-1 (Europe (Frankfurt)):      211125453373.dkr.ecr.eu-central-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
+  eu-north-1 (Europe (Stockholm)):        654654141839.dkr.ecr.eu-north-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
+  eu-west-1 (Europe (Ireland)):           533267293120.dkr.ecr.eu-west-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
+  eu-west-2 (Europe (London)):            011528288831.dkr.ecr.eu-west-2.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
+  ap-northeast-1 (Asia Pacific (Tokyo)):  533267052152.dkr.ecr.ap-northeast-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
+  ap-south-1 (Asia Pacific (Mumbai)):     011528288864.dkr.ecr.ap-south-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
+  ap-southeast-1 (Asia Pacific (Singapore)): 905418428165.dkr.ecr.ap-southeast-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
+  ap-southeast-2 (Asia Pacific (Sydney)):    851725636348.dkr.ecr.ap-southeast-2.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
+  sa-east-1 (South America (São Paulo)):     025066253954.dkr.ecr.sa-east-1.amazonaws.com/hyperpod-health-monitoring-agent:1.0.790.0_1.0.266.0
   ```
 
 ## 7. Troubleshooting

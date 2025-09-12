@@ -1,21 +1,19 @@
 import time
-import uuid
-import json
 import pytest
 import boto3
-
 from sagemaker.hyperpod.inference.hp_jumpstart_endpoint import HPJumpStartEndpoint
 from sagemaker.hyperpod.inference.config.hp_jumpstart_endpoint_config import (
-    Model, Server, SageMakerEndpoint, TlsConfig
+    Model, Server, SageMakerEndpoint
 )
 import sagemaker_core.main.code_injection.codec as codec
+from test.integration_tests.utils import get_time_str
 
 # --------- Config ---------
 NAMESPACE = "integration"
 REGION = "us-east-2"
-ENDPOINT_NAME = "js-sdk-integration"
+ENDPOINT_NAME = "js-sdk-integration-" + get_time_str()
 
-INSTANCE_TYPE = "ml.g5.4xlarge"
+INSTANCE_TYPE = "ml.g5.8xlarge"
 MODEL_ID = "deepseek-llm-r1-distill-qwen-1-5b"
 
 TIMEOUT_MINUTES = 15
@@ -38,12 +36,13 @@ def test_create_endpoint(endpoint_obj):
     endpoint_obj.create(namespace=NAMESPACE)
     assert endpoint_obj.metadata.name == ENDPOINT_NAME
 
+@pytest.mark.dependency(depends=["create"])
 def test_list_endpoint():
     endpoints = HPJumpStartEndpoint.list(namespace=NAMESPACE)
     names = [ep.metadata.name for ep in endpoints]
     assert ENDPOINT_NAME in names
 
-@pytest.mark.dependency(name="describe")
+@pytest.mark.dependency(name="describe", depends=["create"])
 def test_get_endpoint():
     ep = HPJumpStartEndpoint.get(name=ENDPOINT_NAME, namespace=NAMESPACE)
     assert ep.metadata.name == ENDPOINT_NAME
@@ -80,6 +79,7 @@ def test_wait_until_inservice():
     pytest.fail("[ERROR] Timed out waiting for endpoint to be DeploymentComplete")
 
 
+@pytest.mark.dependency(depends=["create"])
 def test_invoke_endpoint(monkeypatch):
     original_transform = codec.transform  # Save original
 
@@ -107,6 +107,7 @@ def test_list_pods():
     pods = ep.list_pods(NAMESPACE)
     assert pods
 
+@pytest.mark.dependency(depends=["create"])
 def test_delete_endpoint():
     ep = HPJumpStartEndpoint.get(name=ENDPOINT_NAME, namespace=NAMESPACE)
     ep.delete()

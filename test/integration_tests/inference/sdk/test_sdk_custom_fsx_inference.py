@@ -1,21 +1,19 @@
 import time
-import uuid
-import json
 import pytest
 import boto3
 import os
 from sagemaker.hyperpod.inference.hp_endpoint import HPEndpoint
 from sagemaker.hyperpod.inference.config.hp_endpoint_config import (
     ModelSourceConfig, FsxStorage, TlsConfig, Worker, ModelVolumeMount,
-    ModelInvocationPort, Resources, EnvironmentVariables, AutoScalingSpec,
-    CloudWatchTrigger, Dimensions, Metrics
+    ModelInvocationPort, Resources, EnvironmentVariables,
 )
 import sagemaker_core.main.code_injection.codec as codec
+from test.integration_tests.utils import get_time_str
 
 # --------- Test Configuration ---------
 NAMESPACE = "integration"
 REGION = "us-east-2"
-ENDPOINT_NAME = f"custom-sdk-integration-fsx"
+ENDPOINT_NAME = "custom-sdk-integration-fsx-" + get_time_str()
 
 MODEL_NAME = f"test-model-integration-sdk-fsx"
 MODEL_LOCATION = "hf-eqa"
@@ -24,14 +22,12 @@ IMAGE_URI = "763104351884.dkr.ecr.us-west-2.amazonaws.com/huggingface-pytorch-in
 TIMEOUT_MINUTES = 15
 POLL_INTERVAL_SECONDS = 30
 
-BETA_FSX = "fs-0454e783bbb7356fc"
-PROD_FSX = "fs-03c59e2a7e824a22f"
-BETA_TLS = "s3://sagemaker-hyperpod-certificate-beta-us-east-2"
-PROD_TLS = "s3://sagemaker-hyperpod-certificate-prod-us-east-2"
+BETA_FSX = "fs-0402c3308e6aba65c"    # fsx id for beta integration test cluster
+PROD_FSX = "fs-0839e3bb2a0b2dacf"    # fsx id for prod integration test cluster
 stage = os.getenv("STAGE", "BETA").upper()
-FSX_LOCATION = BETA_FSX if stage == "BETA" else PROD_FSX
-TLS_LOCATION = BETA_TLS if stage == "BETA" else PROD_TLS
+DEFAULT_FSX_ID = BETA_FSX if stage == "BETA" else PROD_FSX
 
+FSX_LOCATION = os.getenv("FSX_ID", DEFAULT_FSX_ID)
 
 @pytest.fixture(scope="module")
 def sagemaker_client():
@@ -39,9 +35,6 @@ def sagemaker_client():
 
 @pytest.fixture(scope="module")
 def custom_endpoint():
-    # TLS
-    tls = TlsConfig(tls_certificate_output_s3_uri=TLS_LOCATION)
-
     # Model Source
     model_src = ModelSourceConfig(
         model_source_type="fsx",
@@ -79,7 +72,6 @@ def custom_endpoint():
         endpoint_name=ENDPOINT_NAME,
         instance_type="ml.c5.2xlarge",
         model_name=MODEL_NAME,
-        tls_config=tls,
         model_source_config=model_src,
         worker=worker,
     )
@@ -89,12 +81,13 @@ def test_create_endpoint(custom_endpoint):
     custom_endpoint.create(namespace=NAMESPACE)
     assert custom_endpoint.metadata.name == ENDPOINT_NAME
 
+@pytest.mark.dependency(depends=["create"])
 def test_list_endpoint():
     endpoints = HPEndpoint.list(namespace=NAMESPACE)
     names = [ep.metadata.name for ep in endpoints]
     assert ENDPOINT_NAME in names
 
-@pytest.mark.dependency(name="describe")
+@pytest.mark.dependency(name="describe", depends=["create"])
 def test_get_endpoint():
     ep = HPEndpoint.get(name=ENDPOINT_NAME, namespace=NAMESPACE)
     assert ep.modelName == MODEL_NAME
@@ -129,6 +122,7 @@ def test_wait_until_inservice():
 
     pytest.fail("[ERROR] Timed out waiting for endpoint to be DeploymentComplete")
 
+@pytest.mark.dependency(depends=["create"])
 def test_invoke_endpoint(monkeypatch):
     original_transform = codec.transform
 
@@ -157,7 +151,7 @@ def test_list_pods():
     pods = ep.list_pods(NAMESPACE)
     assert pods
 
-
+@pytest.mark.dependency(depends=["create"])
 def test_delete_endpoint():
     ep = HPEndpoint.get(name=ENDPOINT_NAME, namespace=NAMESPACE)
     ep.delete()

@@ -1,6 +1,7 @@
 import unittest
 import subprocess
-from unittest.mock import patch, MagicMock, mock_open
+import logging
+from unittest.mock import patch, MagicMock, mock_open, call
 from sagemaker.hyperpod.common.utils import (
     handle_exception,
     get_eks_name_from_arn,
@@ -11,6 +12,8 @@ from sagemaker.hyperpod.common.utils import (
     list_clusters,
     set_cluster_context,
     get_cluster_context,
+    parse_client_kubernetes_version,
+    is_kubernetes_version_compatible,
 )
 from kubernetes.client.exceptions import ApiException
 from pydantic import ValidationError
@@ -113,6 +116,161 @@ class TestUtilityFunctions(unittest.TestCase):
             get_region_from_eks_arn("invalid:arn:format")
         self.assertIn("cannot get region from EKS ARN", str(context.exception))
 
+    def test_parse_client_kubernetes_version_with_v_prefix(self):
+        """Test parsing client version with 'v' prefix"""
+        self.assertEqual(parse_client_kubernetes_version("v12.0.0"), (1, 16))
+        self.assertEqual(parse_client_kubernetes_version("v17.0.0"), (1, 17))
+
+    def test_parse_client_kubernetes_version_old_client_format(self):
+        """Test parsing old client version format (v12 and before)"""
+        # Test old client format (v12 and before)
+        # v12.0.0 corresponds to Kubernetes v1.16
+        self.assertEqual(parse_client_kubernetes_version("12.0.0"), (1, 16))
+        self.assertEqual(parse_client_kubernetes_version("11.0.0"), (1, 15))
+        self.assertEqual(parse_client_kubernetes_version("10.0.0"), (1, 14))
+
+    def test_parse_client_kubernetes_version_new_client_format(self):
+        """Test parsing new homogenized client version format (v17+)"""
+        # Test new homogenized format (v17+)
+        # v17.0.0 corresponds to Kubernetes v1.17
+        self.assertEqual(parse_client_kubernetes_version("17.0.0"), (1, 17))
+        self.assertEqual(parse_client_kubernetes_version("18.0.0"), (1, 18))
+        self.assertEqual(parse_client_kubernetes_version("24.0.0"), (1, 24))
+
+    def test_parse_client_kubernetes_version_with_suffix(self):
+        """Test parsing version with suffix"""
+        self.assertEqual(parse_client_kubernetes_version("24.0.0+snapshot"), (1, 24))
+        self.assertEqual(parse_client_kubernetes_version("v17.0.0+custom"), (1, 17))
+
+    def test_parse_client_kubernetes_version_invalid_format(self):
+        """Test parsing invalid version format"""
+        self.assertEqual(parse_client_kubernetes_version(""), (0, 0))
+        self.assertEqual(parse_client_kubernetes_version("invalid"), (0, 0))
+        self.assertEqual(parse_client_kubernetes_version("a.b.c"), (0, 0))
+
+    def test_is_kubernetes_version_compatible_same_version(self):
+        """Test compatibility check with same versions"""
+        self.assertTrue(is_kubernetes_version_compatible((1, 24), (1, 24)))
+
+    def test_is_kubernetes_version_compatible_within_range(self):
+        """Test compatibility check with versions within supported range"""
+        # Client within 3 minor versions behind server
+        self.assertTrue(is_kubernetes_version_compatible((1, 23), (1, 24)))
+        self.assertTrue(is_kubernetes_version_compatible((1, 22), (1, 24)))
+        self.assertTrue(is_kubernetes_version_compatible((1, 21), (1, 24)))
+
+        # Client within 1 minor version ahead of server
+        self.assertTrue(is_kubernetes_version_compatible((1, 25), (1, 24)))
+
+    def test_is_kubernetes_version_compatible_outside_range(self):
+        """Test compatibility check with versions outside supported range"""
+        # Client too old (more than 3 minor versions behind)
+        self.assertFalse(is_kubernetes_version_compatible((1, 20), (1, 24)))
+
+        # Client too new (more than 1 minor version ahead)
+        self.assertFalse(is_kubernetes_version_compatible((1, 26), (1, 24)))
+
+    def test_is_kubernetes_version_compatible_different_major(self):
+        """Test compatibility check with different major versions"""
+        # Different major versions should be incompatible
+        self.assertFalse(is_kubernetes_version_compatible((2, 0), (1, 0)))
+
+    def test_is_kubernetes_version_compatible_default_versions(self):
+        """Test compatibility check with default versions (0, 0)"""
+        # Default versions should be treated as compatible
+        self.assertTrue(is_kubernetes_version_compatible((0, 0), (1, 24)))
+        self.assertTrue(is_kubernetes_version_compatible((1, 24), (0, 0)))
+        self.assertTrue(is_kubernetes_version_compatible((0, 0), (0, 0)))
+
+    @patch('click.secho')
+    @patch('kubernetes.client.VersionApi')
+    @patch('sagemaker.hyperpod.common.utils.kubernetes_client_version', '12.0.0')
+    def test_verify_kubernetes_version_compatibility_incompatible_min_version(self, mock_version_api, mock_secho):
+        """Test verify_kubernetes_version_compatibility with incompatible minimum version"""
+        # Mock server version info with minimum compatibility requirements
+        mock_server_info = MagicMock()
+        mock_server_info.major = '1'
+        mock_server_info.minor = '28'
+        mock_server_info.min_compatibility_major = '1'
+        mock_server_info.min_compatibility_minor = '25'
+
+        mock_version_api_instance = MagicMock()
+        mock_version_api_instance.get_code.return_value = mock_server_info
+        mock_version_api.return_value = mock_version_api_instance
+
+        mock_logger = MagicMock()
+
+        from sagemaker.hyperpod.common.utils import verify_kubernetes_version_compatibility
+        result = verify_kubernetes_version_compatibility(mock_logger)
+
+        # Should return False for incompatible versions
+        self.assertFalse(result)
+
+        # Should call click.secho with yellow color for warning
+        mock_secho.assert_called_once()
+        call_args = mock_secho.call_args
+        self.assertIn('WARNING:', call_args[0][0])
+        self.assertIn('1.16 is incompatible with server 1.28', call_args[0][0])
+        self.assertEqual(call_args[1]['fg'], 'yellow')
+
+    @patch('click.secho')
+    @patch('kubernetes.client.VersionApi')
+    @patch('sagemaker.hyperpod.common.utils.kubernetes_client_version', '12.0.0')
+    def test_verify_kubernetes_version_compatibility_incompatible_standard_policy(self, mock_version_api, mock_secho):
+        """Test verify_kubernetes_version_compatibility with standard policy incompatibility"""
+        # Mock server version info without minimum compatibility requirements
+        mock_server_info = MagicMock()
+        mock_server_info.major = '1'
+        mock_server_info.minor = '28'
+        mock_server_info.min_compatibility_major = None
+        mock_server_info.min_compatibility_minor = None
+
+        mock_version_api_instance = MagicMock()
+        mock_version_api_instance.get_code.return_value = mock_server_info
+        mock_version_api.return_value = mock_version_api_instance
+
+        mock_logger = MagicMock()
+
+        from sagemaker.hyperpod.common.utils import verify_kubernetes_version_compatibility
+        result = verify_kubernetes_version_compatibility(mock_logger)
+
+        # Should return False for incompatible versions
+        self.assertFalse(result)
+
+        # Should call click.secho with yellow color for warning
+        mock_secho.assert_called_once()
+        call_args = mock_secho.call_args
+        self.assertIn('WARNING:', call_args[0][0])
+        self.assertIn('1.16 is incompatible with server 1.28', call_args[0][0])
+        self.assertEqual(call_args[1]['fg'], 'yellow')
+
+    @patch('click.secho')
+    @patch('kubernetes.client.VersionApi')
+    @patch('sagemaker.hyperpod.common.utils.kubernetes_client_version', '24.0.0')
+    def test_verify_kubernetes_version_compatibility_compatible_no_warning(self, mock_version_api, mock_secho):
+        """Test verify_kubernetes_version_compatibility with compatible versions - no warning should show"""
+        # Mock server version info with compatible version
+        mock_server_info = MagicMock()
+        mock_server_info.major = '1'
+        mock_server_info.minor = '24'
+        mock_server_info.min_compatibility_major = None
+        mock_server_info.min_compatibility_minor = None
+
+        mock_version_api_instance = MagicMock()
+        mock_version_api_instance.get_code.return_value = mock_server_info
+        mock_version_api.return_value = mock_version_api_instance
+
+        mock_logger = MagicMock()
+
+        from sagemaker.hyperpod.common.utils import verify_kubernetes_version_compatibility
+        result = verify_kubernetes_version_compatibility(mock_logger)
+
+        # Should return True for compatible versions
+        self.assertTrue(result)
+
+        # Should NOT call click.secho since no warning needed
+        mock_secho.assert_not_called()
+
     def test_is_eks_orchestrator_true(self):
         mock_client = MagicMock()
         mock_client.describe_cluster.return_value = {"Orchestrator": {"Eks": {}}}
@@ -129,6 +287,35 @@ class TestUtilityFunctions(unittest.TestCase):
         result = is_eks_orchestrator(mock_client, "my-cluster")
         
         self.assertFalse(result)
+        mock_client.describe_cluster.assert_called_once_with(ClusterName="my-cluster")
+
+    @patch('sagemaker.hyperpod.common.utils.create_boto3_client')
+    def test_region_to_az_ids(self, mock_create_client):
+        """Test region_to_az_ids function"""
+        from sagemaker.hyperpod.common.utils import region_to_az_ids
+        
+        mock_response = {
+            'AvailabilityZones': [
+                {'ZoneId': 'use1-az1', 'ZoneName': 'us-east-1a'},
+                {'ZoneId': 'use1-az2', 'ZoneName': 'us-east-1b'},
+                {'ZoneId': 'use1-az3', 'ZoneName': 'us-east-1c'}
+            ]
+        }
+        
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_availability_zones.return_value = mock_response
+        mock_create_client.return_value = mock_ec2
+        
+        result = region_to_az_ids('us-east-1')
+        
+        self.assertEqual(result, ['use1-az1', 'use1-az2', 'use1-az3'])
+        mock_create_client.assert_called_once_with('ec2', region_name='us-east-1')
+        mock_ec2.describe_availability_zones.assert_called_once_with(
+            Filters=[
+                {'Name': 'region-name', 'Values': ['us-east-1']},
+                {'Name': 'zone-type', 'Values': ['availability-zone']}
+            ]
+        )
 
     @patch("subprocess.run")
     def test_update_kube_config_success(self, mock_run):

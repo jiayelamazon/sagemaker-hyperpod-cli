@@ -10,6 +10,12 @@ from hyperpod_custom_inference_template.registry import SCHEMA_REGISTRY as C_REG
 from sagemaker.hyperpod.inference.hp_jumpstart_endpoint import HPJumpStartEndpoint
 from sagemaker.hyperpod.inference.hp_endpoint import HPEndpoint
 from sagemaker_core.resources import Endpoint
+from sagemaker.hyperpod.common.telemetry.telemetry_logging import (
+    _hyperpod_telemetry_emitter,
+)
+from sagemaker.hyperpod.common.telemetry.constants import Feature
+from sagemaker.hyperpod.common.cli_decorators import handle_cli_exceptions
+from sagemaker.hyperpod.common.utils import display_formatted_logs
 
 
 # CREATE
@@ -26,12 +32,14 @@ from sagemaker_core.resources import Endpoint
     schema_pkg="hyperpod_jumpstart_inference_template",
     registry=JS_REG,
 )
-def js_create(namespace, version, js_endpoint):
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "create_js_endpoint_cli")
+@handle_cli_exceptions()
+def js_create(name, namespace, version, js_endpoint):
     """
     Create a jumpstart model endpoint.
     """
 
-    js_endpoint.create(namespace=namespace)
+    js_endpoint.create(name=name, namespace=namespace)
 
 
 @click.command("hyp-custom-endpoint")
@@ -47,12 +55,14 @@ def js_create(namespace, version, js_endpoint):
     schema_pkg="hyperpod_custom_inference_template",
     registry=C_REG,
 )
-def custom_create(namespace, version, custom_endpoint):
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "create_custom_endpoint_cli")
+@handle_cli_exceptions()
+def custom_create(name, namespace, version, custom_endpoint):
     """
     Create a custom model endpoint.
     """
 
-    custom_endpoint.create(namespace=namespace)
+    custom_endpoint.create(name=name, namespace=namespace)
 
 
 # INVOKE
@@ -76,13 +86,15 @@ def custom_create(namespace, version, custom_endpoint):
     default="application/json",
     help="Optional. The content type of the request to invoke. Default set to 'application/json'",
 )
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "invoke_custom_endpoint_cli")
+@handle_cli_exceptions()
 def custom_invoke(
     endpoint_name: str,
     body: str,
     content_type: Optional[str]
 ):
     """
-    Invoke a model endpoint.
+    Invoke a custom model endpoint.
     """
     try:
         payload = json.dumps(json.loads(body))
@@ -128,13 +140,14 @@ def custom_invoke(
     default="default",
     help="Optional. The namespace of the jumpstart model endpoint to list. Default set to 'default'",
 )
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "list_js_endpoints_cli")
+@handle_cli_exceptions()
 def js_list(
     namespace: Optional[str],
 ):
     """
-    List jumpstart model endpoints with provided namespace.
+    List all Hyperpod Jumpstart model endpoints.
     """
-
     endpoints = HPJumpStartEndpoint.model_construct().list(namespace)
     data = [ep.model_dump() for ep in endpoints]
 
@@ -170,13 +183,14 @@ def js_list(
     default="default",
     help="Optional. The namespace of the custom model endpoint to list. Default set to 'default'",
 )
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "list_custom_endpoints_cli")
+@handle_cli_exceptions()
 def custom_list(
     namespace: Optional[str],
 ):
     """
-    List custom model endpoints with provided namespace.
+    List all Hyperpod custom model endpoints.
     """
-
     endpoints = HPEndpoint.model_construct().list(namespace)
     data = [ep.model_dump() for ep in endpoints]
 
@@ -226,15 +240,16 @@ def custom_list(
     required=False,
     help="Optional. If set to `True`, the full json will be displayed",
 )
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "get_js_endpoint_cli")
+@handle_cli_exceptions()
 def js_describe(
     name: str,
     namespace: Optional[str],
     full: bool
 ):
     """
-    Describe a jumpstart model endpoint with provided name and namespace.
+    Describe a Hyperpod Jumpstart model endpoint.
     """
-
     my_endpoint = HPJumpStartEndpoint.model_construct().get(name, namespace)
     data = my_endpoint.model_dump()
 
@@ -246,15 +261,27 @@ def js_describe(
         if not isinstance(data, dict):
             click.echo("Invalid data received: expected a dictionary.")
             return
-
+        
+        click.echo("\nDeployment (should be completed in 1-5 min):")
+    
         status = data.get("status") or {}
         metadata = data.get("metadata") or {}
         model = data.get("model") or {}
         server = data.get("server") or {}
         tls = data.get("tlsConfig") or {}
 
+        raw_state = status.get("deploymentStatus", {}) \
+                        .get("deploymentObjectOverallState", "") or ""
+        if raw_state == "DeploymentComplete":
+            fg = "green"
+        elif raw_state == "DeploymentInProgress":
+            fg = "yellow"
+        else:
+            fg = "red"
+        colored_state = click.style(raw_state, fg=fg, bold=True)
+
         summary = [
-            ("Deployment State:",       status.get("deploymentStatus", {}).get("deploymentObjectOverallState", "")),
+            ("Status:",                 colored_state),
             ("Metadata Name:",          metadata.get("name", "")),
             ("Namespace:",              metadata.get("namespace", "")),
             ("Label:",                  metadata.get("label", "")),
@@ -266,43 +293,7 @@ def js_describe(
         ]
         click.echo(tabulate(summary, tablefmt="plain"))
 
-        click.echo("\nSageMaker Endpoint:")
-        status     = data.get("status")     or {}
-        endpoints  = status.get("endpoints") or {}
-        sagemaker_info = endpoints.get("sagemaker")
-        if not sagemaker_info:
-            click.secho("  <no SageMaker endpoint information available>", fg="yellow")
-        else:
-            ep_rows = [
-                    ("State:",         data.get("status", {}).get("endpoints", {}).get("sagemaker", {}).get("state")),
-                    ("Name:",          data.get("sageMakerEndpoint", {}).get("name")),
-                    ("ARN:",           data.get("status", {}).get("endpoints", {}).get("sagemaker", {}).get("endpointArn")),
-            ]
-            click.echo(tabulate(ep_rows, tablefmt="plain"))
-
-        click.echo("\nConditions:")
-
-        status = data.get("status") if isinstance(data, dict) else {}
-        status = status or {}  
-        conds = status.get("conditions", [])
-
-        if isinstance(conds, list) and conds:
-            headers = ["TYPE", "STATUS", "LAST TRANSITION", "LAST UPDATE", "MESSAGE"]
-            rows = [
-                [
-                    c.get("type", ""),
-                    c.get("status", ""),
-                    c.get("lastTransitionTime", ""),
-                    c.get("lastUpdateTime", ""),
-                    c.get("message") or ""
-                ]
-                for c in conds if isinstance(c, dict)
-            ]
-            click.echo(tabulate(rows, headers=headers, tablefmt="github"))
-        else:
-            click.echo("  <none>")
-
-        click.echo("\nDeploymentStatus Conditions:")
+        click.echo("\nDeployment Status Conditions:")
 
         status = data.get("status") if isinstance(data, dict) else {}
         status = status or {}
@@ -322,6 +313,54 @@ def js_describe(
                     c.get("message") or ""
                 ]
                 for c in dep_conds if isinstance(c, dict)
+            ]
+            click.echo(tabulate(rows, headers=headers, tablefmt="github"))
+        else:
+            click.echo("  <none>")
+
+        click.echo() 
+        click.echo(click.style("─" * 60, fg="white"))
+        
+        click.echo("\nSageMaker Endpoint (takes ~10 min to create):")
+        status     = data.get("status")     or {}
+        endpoints  = status.get("endpoints") or {}
+        sagemaker_info = endpoints.get("sagemaker")
+
+        if not sagemaker_info:
+            click.secho("  <no SageMaker endpoint information available>", fg="yellow")
+        else:
+            raw_state = sagemaker_info.get("state", "") or ""
+            if raw_state == "CreationCompleted":
+                fg = "green"
+            elif raw_state == "CreationInProgress":
+                fg = "yellow"
+            else:
+                fg = "red"
+            colored_state = click.style(raw_state, fg=fg, bold=True)
+            ep_rows = [
+                    ("Status:",         colored_state),
+                    ("Name:",          data.get("sageMakerEndpoint", {}).get("name")),
+                    ("ARN:",           sagemaker_info.get("endpointArn")),
+            ]
+            click.echo(tabulate(ep_rows, tablefmt="plain"))
+
+        click.echo("\nSagemaker Endpoint Status Conditions:")
+
+        status = data.get("status") if isinstance(data, dict) else {}
+        status = status or {}  
+        conds = status.get("conditions", [])
+
+        if isinstance(conds, list) and conds:
+            headers = ["TYPE", "STATUS", "LAST TRANSITION", "LAST UPDATE", "MESSAGE"]
+            rows = [
+                [
+                    c.get("type", ""),
+                    c.get("status", ""),
+                    c.get("lastTransitionTime", ""),
+                    c.get("lastUpdateTime", ""),
+                    c.get("message") or ""
+                ]
+                for c in conds if isinstance(c, dict)
             ]
             click.echo(tabulate(rows, headers=headers, tablefmt="github"))
         else:
@@ -350,15 +389,16 @@ def js_describe(
     required=False,
     help="Optional. If set to `True`, the full json will be displayed",
 )
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "get_custom_endpoint_cli")
+@handle_cli_exceptions()
 def custom_describe(
     name: str,
     namespace: Optional[str],
     full: bool
 ):
     """
-    Describe a custom model endpoint with provided name and namespace.
+    Describe a Hyperpod custom model endpoint.
     """
-
     my_endpoint = HPEndpoint.model_construct().get(name, namespace)
     data = my_endpoint.model_dump()
 
@@ -371,7 +411,8 @@ def custom_describe(
             click.echo("Invalid data received: expected a dictionary.")
             return
 
-        # Safe access blocks
+        click.echo("\nDeployment (should be completed in 1-5 min):")
+
         status = data.get("status") or {}
         metadata = data.get("metadata") or {}
         metrics = data.get("metrics") or {}
@@ -385,8 +426,18 @@ def custom_describe(
         model_port = worker.get("modelInvocationPort") or {}
         cloudwatch = data.get("autoScalingSpec", {}).get("cloudWatchTrigger") or {}
 
+        raw_state = status.get("deploymentStatus", {}) \
+                        .get("deploymentObjectOverallState", "") or ""
+        if raw_state == "DeploymentComplete":
+            fg = "green"
+        elif raw_state == "DeploymentInProgress":
+            fg = "yellow"
+        else:
+            fg = "red"
+        colored_state = click.style(raw_state, fg=fg, bold=True)
+
         summary = [
-            ("Deployment State:",           status.get("deploymentStatus", {}).get("deploymentObjectOverallState", "")),
+            ("Deployment State:",           colored_state),
             ("Metadata Name:",              metadata.get("name", "")),
             ("Namespace:",                  metadata.get("namespace", "")),
             ("Label:",                      metadata.get("label", "")),
@@ -425,41 +476,15 @@ def custom_describe(
 
         click.echo(tabulate(summary, tablefmt="plain"))
 
-        click.echo("\nSageMaker Endpoint:")
-        sm_endpoints = status.get("endpoints") or {}
-        sagemaker_info = sm_endpoints.get("sagemaker")
-        if not sagemaker_info:
-            click.secho("  <no SageMaker endpoint information available>", fg="yellow")
-        else:
-            ep_rows = [
-                ("State:", sm_endpoints.get("sagemaker", {}).get("state", "")),
-                ("Name:", data.get("sageMakerEndpoint", {}).get("name", "")),
-                ("ARN:", sm_endpoints.get("sagemaker", {}).get("endpointArn", "")),
-            ]
-            click.echo(tabulate(ep_rows, tablefmt="plain"))
+        click.echo("\nDeployment Status Conditions:")
 
-        click.echo("\nConditions:")
-        conds = status.get("conditions", [])
-        if isinstance(conds, list) and conds:
-            headers = ["TYPE", "STATUS", "LAST TRANSITION", "LAST UPDATE", "MESSAGE"]
-            rows = [
-                [
-                    c.get("type", ""),
-                    c.get("status", ""),
-                    c.get("lastTransitionTime", ""),
-                    c.get("lastUpdateTime", ""),
-                    c.get("message") or ""
-                ]
-                for c in conds if isinstance(c, dict)
-            ]
-            click.echo(tabulate(rows, headers=headers, tablefmt="github"))
-        else:
-            click.echo("  <none>")
+        status = data.get("status") if isinstance(data, dict) else {}
+        status = status or {}
 
-        click.echo("\nDeploymentStatus Conditions:")
         deployment_status = status.get("deploymentStatus") or {}
         dep_status_inner = deployment_status.get("status") or {}
         dep_conds = dep_status_inner.get("conditions") or []
+
         if isinstance(dep_conds, list) and dep_conds:
             headers = ["TYPE", "STATUS", "LAST TRANSITION", "LAST UPDATE", "MESSAGE"]
             rows = [
@@ -471,6 +496,54 @@ def custom_describe(
                     c.get("message") or ""
                 ]
                 for c in dep_conds if isinstance(c, dict)
+            ]
+            click.echo(tabulate(rows, headers=headers, tablefmt="github"))
+        else:
+            click.echo("  <none>")
+
+        click.echo() 
+        click.echo(click.style("─" * 60, fg="white"))
+        
+        click.echo("\nSageMaker Endpoint (takes ~10 min to create):")
+        status     = data.get("status")     or {}
+        endpoints  = status.get("endpoints") or {}
+        sagemaker_info = endpoints.get("sagemaker")
+
+        if not sagemaker_info:
+            click.secho("  <no SageMaker endpoint information available>", fg="yellow")
+        else:
+            raw_state = sagemaker_info.get("state", "") or ""
+            if raw_state == "CreationCompleted":
+                fg = "green"
+            elif raw_state == "CreationInProgress":
+                fg = "yellow"
+            else:
+                fg = "red"
+            colored_state = click.style(raw_state, fg=fg, bold=True)
+            ep_rows = [
+                    ("Status:",         colored_state),
+                    ("Name:",          data.get("sageMakerEndpoint", {}).get("name")),
+                    ("ARN:",           sagemaker_info.get("endpointArn")),
+            ]
+            click.echo(tabulate(ep_rows, tablefmt="plain"))
+
+        click.echo("\nSagemaker Endpoint Status Conditions:")
+
+        status = data.get("status") if isinstance(data, dict) else {}
+        status = status or {}  
+        conds = status.get("conditions", [])
+
+        if isinstance(conds, list) and conds:
+            headers = ["TYPE", "STATUS", "LAST TRANSITION", "LAST UPDATE", "MESSAGE"]
+            rows = [
+                [
+                    c.get("type", ""),
+                    c.get("status", ""),
+                    c.get("lastTransitionTime", ""),
+                    c.get("lastUpdateTime", ""),
+                    c.get("message") or ""
+                ]
+                for c in conds if isinstance(c, dict)
             ]
             click.echo(tabulate(rows, headers=headers, tablefmt="github"))
         else:
@@ -491,13 +564,17 @@ def custom_describe(
     default="default",
     help="Optional. The namespace of the jumpstart model endpoint to delete. Default set to 'default'.",
 )
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "delete_js_endpoint_cli")
+@handle_cli_exceptions()
 def js_delete(
     name: str,
     namespace: Optional[str],
 ):
     """
-    Delete a jumpstart model endpoint with provided name and namespace.
+    Delete a Hyperpod Jumpstart model endpoint.
     """
+    # Auto-detects the endpoint type and operation
+    # 0Provides 404 message: "❓ JumpStart endpoint 'missing-name' not found..."
     my_endpoint = HPJumpStartEndpoint.model_construct().get(name, namespace)
     my_endpoint.delete()
 
@@ -516,12 +593,14 @@ def js_delete(
     default="default",
     help="Optional. The namespace of the custom model endpoint to delete. Default set to 'default'.",
 )
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "delete_custom_endpoint_cli")
+@handle_cli_exceptions()
 def custom_delete(
     name: str,
     namespace: Optional[str],
 ):
     """
-    Delete a custom model endpoint with provided name and namespace.
+    Delete a Hyperpod custom model endpoint.
     """
     my_endpoint = HPEndpoint.model_construct().get(name, namespace)
     my_endpoint.delete()
@@ -535,14 +614,23 @@ def custom_delete(
     default="default",
     help="Optional. The namespace of the jumpstart model to list pods for. Default set to 'default'.",
 )
+@click.option(
+    "--endpoint-name",
+    type=click.STRING,
+    required=False,
+    help="Optional. The name of the jumpstart endpoint to list pods.",
+)
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "list_pods_js_endpoint_cli")
+@handle_cli_exceptions()
 def js_list_pods(
     namespace: Optional[str],
+    endpoint_name: Optional[str],
 ):
     """
-    Get specific pod log for jumpstart model endpoint.
+    List all pods related to jumpstart model endpoint.
     """
     my_endpoint = HPJumpStartEndpoint.model_construct()
-    pods = my_endpoint.list_pods(namespace=namespace)
+    pods = my_endpoint.list_pods(namespace=namespace, endpoint_name=endpoint_name)
     click.echo(pods)
 
 
@@ -554,14 +642,23 @@ def js_list_pods(
     default="default",
     help="Optional. The namespace of the custom model to list pods for. Default set to 'default'.",
 )
+@click.option(
+    "--endpoint-name",
+    type=click.STRING,
+    required=False,
+    help="Optional. The name of the custom model endpoint to list pods.",
+)
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "list_pods_custom_endpoint_cli")
+@handle_cli_exceptions()
 def custom_list_pods(
     namespace: Optional[str],
+    endpoint_name: Optional[str],
 ):
     """
-    Get specific pod log for custom model endpoint.
+    List all pods related to custom model endpoint.
     """
     my_endpoint = HPEndpoint.model_construct()
-    pods = my_endpoint.list_pods(namespace=namespace)
+    pods = my_endpoint.list_pods(namespace=namespace, endpoint_name=endpoint_name)
     click.echo(pods)
 
 
@@ -585,6 +682,8 @@ def custom_list_pods(
     default="default",
     help="Optional. The namespace of the jumpstart model to get logs for. Default set to 'default'.",
 )
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "get_logs_js_endpoint")
+@handle_cli_exceptions()
 def js_get_logs(
     pod_name: str,
     container: Optional[str],
@@ -595,7 +694,10 @@ def js_get_logs(
     """
     my_endpoint = HPJumpStartEndpoint.model_construct()
     logs = my_endpoint.get_logs(pod=pod_name, container=container, namespace=namespace)
-    click.echo(logs)
+    
+    # Use common log display utility for consistent formatting across all job types
+    container_info = f" (container: {container})" if container else ""
+    display_formatted_logs(logs, title=f"JumpStart Endpoint Logs for {pod_name}{container_info}")
 
 
 @click.command("hyp-custom-endpoint")
@@ -618,6 +720,8 @@ def js_get_logs(
     default="default",
     help="Optional. The namespace of the custom model to get logs for. Default set to 'default'.",
 )
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "get_logs_custom_endpoint")
+@handle_cli_exceptions()
 def custom_get_logs(
     pod_name: str,
     container: Optional[str],
@@ -628,7 +732,10 @@ def custom_get_logs(
     """
     my_endpoint = HPEndpoint.model_construct()
     logs = my_endpoint.get_logs(pod=pod_name, container=container, namespace=namespace)
-    click.echo(logs)
+    
+    # Use common log display utility for consistent formatting across all job types
+    container_info = f" (container: {container})" if container else ""
+    display_formatted_logs(logs, title=f"Custom Endpoint Logs for {pod_name}{container_info}")
 
 
 @click.command("hyp-jumpstart-endpoint")
@@ -638,11 +745,13 @@ def custom_get_logs(
     required=True,
     help="Required. The time frame to get logs for.",
 )
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "get_js_operator_logs")
+@handle_cli_exceptions()
 def js_get_operator_logs(
     since_hours: float,
 ):
     """
-    Get operator logs for jumpstart model endpoint in the set time frame.
+    Get operator logs for jumpstart model endpoint.
     """
     my_endpoint = HPJumpStartEndpoint.model_construct()
     logs = my_endpoint.get_operator_logs(since_hours=since_hours)
@@ -656,11 +765,13 @@ def js_get_operator_logs(
     required=True,
     help="Required. The time frame get logs for.",
 )
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "get_custom_operator_logs")
+@handle_cli_exceptions()
 def custom_get_operator_logs(
     since_hours: float,
 ):
     """
-    Get operator logs for custom model endpoint in the set time frame.
+    Get operator logs for custom model endpoint.
     """
     my_endpoint = HPEndpoint.model_construct()
     logs = my_endpoint.get_operator_logs(since_hours=since_hours)

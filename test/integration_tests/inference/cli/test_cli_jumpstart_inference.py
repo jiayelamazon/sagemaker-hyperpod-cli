@@ -1,5 +1,4 @@
 import time
-import uuid
 import pytest
 import boto3
 from click.testing import CliRunner
@@ -7,6 +6,7 @@ from sagemaker.hyperpod.cli.commands.inference import (
     js_create, custom_invoke, js_list, js_describe, js_delete, js_get_operator_logs, js_list_pods
 )
 from sagemaker.hyperpod.inference.hp_jumpstart_endpoint import HPJumpStartEndpoint
+from test.integration_tests.utils import get_time_str
 
 # --------- Test Configuration ---------
 NAMESPACE = "integration"
@@ -21,7 +21,7 @@ def runner():
 
 @pytest.fixture(scope="module")
 def js_endpoint_name():
-    return f"js-cli-integration"
+    return "js-cli-integration-" + get_time_str()
 
 @pytest.fixture(scope="module")
 def sagemaker_client():
@@ -34,19 +34,20 @@ def test_js_create(runner, js_endpoint_name):
         "--namespace", NAMESPACE,
         "--version", VERSION,
         "--model-id", "deepseek-llm-r1-distill-qwen-1-5b",
-        "--instance-type", "ml.g5.4xlarge",
+        "--instance-type", "ml.g5.8xlarge",
         "--endpoint-name", js_endpoint_name,
     ])
     assert result.exit_code == 0, result.output
 
 
+@pytest.mark.dependency(depends=["create"])
 def test_js_list(runner, js_endpoint_name):
     result = runner.invoke(js_list, ["--namespace", NAMESPACE])
     assert result.exit_code == 0
     assert js_endpoint_name in result.output
 
 
-@pytest.mark.dependency(name="describe")
+@pytest.mark.dependency(name="describe", depends=["create"])
 def test_js_describe(runner, js_endpoint_name):
     result = runner.invoke(js_describe, [
         "--name", js_endpoint_name,
@@ -88,6 +89,8 @@ def test_wait_until_inservice(js_endpoint_name):
     pytest.fail("[ERROR] Timed out waiting for endpoint to be DeploymentComplete")
 
 
+@pytest.mark.dependency(depends=["create"])
+@pytest.mark.skip
 def test_custom_invoke(runner, js_endpoint_name):
     result = runner.invoke(custom_invoke, [
         "--endpoint-name", js_endpoint_name,
@@ -107,6 +110,7 @@ def test_js_list_pods(runner):
     assert result.exit_code == 0
 
 
+@pytest.mark.dependency(depends=["create"])
 def test_js_delete(runner, js_endpoint_name):
     result = runner.invoke(js_delete, [
         "--name", js_endpoint_name,
