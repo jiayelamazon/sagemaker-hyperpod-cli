@@ -57,6 +57,9 @@ from sagemaker.hyperpod.cli.utils import (
     set_logging_level,
     store_current_hyperpod_context,
 )
+from sagemaker.hyperpod.cli.cluster_utils import (
+    validate_eks_access_before_kubeconfig_update,
+)
 from sagemaker.hyperpod.cli.validators.cluster_validator import (
     ClusterValidator,
 )
@@ -74,6 +77,8 @@ from sagemaker.hyperpod.common.telemetry.telemetry_logging import (
     _hyperpod_telemetry_emitter,
 )
 from sagemaker.hyperpod.common.telemetry.constants import Feature
+from sagemaker.hyperpod.cli.utils import convert_datetimes
+from sagemaker_core.main.resources import Cluster
 
 RATE_LIMIT = 4
 RATE_LIMIT_PERIOD = 1  # 1 second
@@ -584,6 +589,11 @@ def set_cluster_context(
         sm_client = get_sagemaker_client(session, botocore_config)
         hp_cluster_details = sm_client.describe_cluster(ClusterName=cluster_name)
         logger.debug("Fetched hyperpod cluster details")
+        
+        # Check if cluster is EKS-orchestrated
+        if "Orchestrator" not in hp_cluster_details or "Eks" not in hp_cluster_details.get("Orchestrator", {}):
+            raise ValueError(f"Cluster '{cluster_name}' is not EKS-orchestrated. HyperPod CLI only supports EKS-orchestrated clusters.")
+        
         store_current_hyperpod_context(hp_cluster_details)
         eks_cluster_arn = hp_cluster_details["Orchestrator"]["Eks"]["ClusterArn"]
         logger.debug(
@@ -591,6 +601,29 @@ def set_cluster_context(
         )
 
         eks_name = get_name_from_arn(eks_cluster_arn)
+        
+        # Proactively validate EKS access before attempting kubeconfig update
+        logger.debug("Validating EKS access entries before kubeconfig update...")
+        try:
+            has_access, message = validate_eks_access_before_kubeconfig_update(
+                session, cluster_name, eks_name
+            )
+            
+            if has_access:
+                logger.debug(message)
+            else:
+                # Access validation failed - provide clear error message
+                logger.error(message)
+                sys.exit(1)
+                
+        except Exception as validation_error:
+            # If access validation fails unexpectedly, log warning but continue
+            # This ensures backward compatibility if the validation has issues
+            logger.warning(
+                f"Could not validate EKS access entries: {validation_error}. "
+                f"Proceeding with kubeconfig update..."
+            )
+        
         _update_kube_config(eks_name, region, None)
         k8s_client = KubernetesClient()
         k8s_client.set_context(eks_cluster_arn, namespace)
@@ -652,6 +685,75 @@ def get_cluster_context(
         )
         sys.exit(1)
 
+
+@click.command("cluster")
+@click.argument("cluster-name", required=True)
+@click.option("--region", help="AWS region")
+@click.option("--debug", is_flag=True, help="Enable debug logging")
+@_hyperpod_telemetry_emitter(Feature.HYPERPOD_CLI, "describe_cluster_cli")
+def describe_cluster(cluster_name: str, debug: bool, region: str) -> None:
+    """Describe the status of a HyperPod cluster.
+    Shows detailed information about a SageMaker HyperPod cluster including its current status,
+    instance groups, orchestrator details, and configuration.
+    Usage Examples
+          # Describe a cluster
+          hyp describe cluster my-cluster-name
+          # Describe with specific region
+          hyp describe cluster my-cluster-name --region us-west-2
+    """
+    if debug:
+        set_logging_level(logger, logging.DEBUG)
+
+    try:
+        botocore_config = botocore.config.Config(
+            user_agent_extra=get_user_agent_extra_suffix()
+        )
+        session = boto3.Session(region_name=region) if region else boto3.Session()
+        sm_client = get_sagemaker_client(session, botocore_config)
+
+        # Get cluster details using SageMaker client
+        cluster_dict = sm_client.describe_cluster(ClusterName=cluster_name)
+
+        # Convert datetimes for display
+        cluster_dict = convert_datetimes(cluster_dict)
+
+        logger.debug(f"Describing cluster name: {cluster_name}\ninfo: {json.dumps(cluster_dict, indent=2, default=str)}")
+
+        click.echo(f"📋 Cluster Details for: {cluster_name}")
+
+        # Highlight cluster status
+        cluster_status = cluster_dict.get('ClusterStatus', 'UNKNOWN')
+        click.echo(f"Status: ", nl=False)
+        click.secho(cluster_status)
+
+        table_data = []
+        for key, value in cluster_dict.items():
+            if isinstance(value, (dict, list)):
+                formatted_value = json.dumps(value, indent=2, default=str)
+            else:
+                formatted_value = str(value)
+            table_data.append([key, formatted_value])
+
+        # Only display table if we have data
+        if table_data:
+            click.echo(tabulate(table_data, tablefmt="presto"))
+        else:
+            click.echo("No cluster data available")
+
+    except Exception as e:
+        logger.error(f"Failed to describe cluster: {e}")
+        if debug:
+            logger.exception("Detailed error information:")
+
+        if "does not exist" in str(e) or "not found" in str(e).lower():
+            click.echo(f"❌ Cluster '{cluster_name}' not found")
+        elif "AccessDenied" in str(e):
+            click.echo("❌ Access denied. Check AWS permissions")
+        else:
+            click.echo(f"❌ Error describing cluster: {e}")
+
+        sys.exit(1)
+        
 
 @click.command()
 @click.option("--grafana", is_flag=True, help="Returns Grafana Dashboard URL")

@@ -1,5 +1,30 @@
 # Changelog
 
+## v.3.3.1 (2025-10-30)
+
+### Features
+
+  * Describe cluster command
+    * User can use hyp describe cluster to learn more info about hp clusters
+  * Jinja template handling logic for inference and training
+    * User can modify jinja template to add parameters supported by CRD through init experience of inference and training, for further CLI customization
+  * Cluster creation template versioning
+    * User can choose cloudformation template version through cluster creation expeirence
+  * KVCache and intelligent routing for HyperPod Inference
+    * InferenceEndpointConfig CRD supported is updated to v1
+    * KVCache and Intelligent Routing support is added in template version 1.1
+
+
+## v.3.3.0 (2025-09-23)
+
+### Features
+
+  * Init Experience
+    * Init, Validate, and Create JumpStart endpoint, Custom endpoint, and PyTorch Training Job with local configuration
+  * Cluster management 
+    * Bug fixes for cluster creation
+    
+
 ## v.3.2.2 (2025-09-10)
 
 ### Features
@@ -61,5 +86,6 @@
 ### Features
 
 - feature: Add support for SageMaker HyperPod CLI
+
 
 

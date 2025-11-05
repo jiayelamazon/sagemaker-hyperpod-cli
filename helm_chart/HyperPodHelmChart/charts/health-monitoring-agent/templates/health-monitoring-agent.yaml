@@ -75,6 +75,7 @@ spec:
                       - ml.p5en.48xlarge
                       - ml.p5e.48xlarge
                       - ml.p5.48xlarge
+                      - ml.p5.4xlarge
                       - ml.p4d.24xlarge
                       - ml.p4de.24xlarge
                       - ml.g5.xlarge
@@ -85,6 +86,12 @@ spec:
                       - ml.g5.16xlarge
                       - ml.g5.24xlarge
                       - ml.g5.48xlarge
+                      - ml.inf2.xlarge
+                      - ml.inf2.8xlarge
+                      - ml.inf2.24xlarge
+                      - ml.inf2.48xlarge
+                      - ml.trn1.32xlarge
+                      - ml.trn1n.32xlarge
                       - ml.g6.xlarge
                       - ml.g6.2xlarge
                       - ml.g6.4xlarge
